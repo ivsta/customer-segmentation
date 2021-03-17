@@ -1,0 +1,161 @@
+install.packages('tidyverse')
+library("tidyverse")
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(DT)
+library(lubridate)
+library(scales)
+library(plotly)
+install.packages("ggthemes")
+library(ggthemes)
+
+#import data
+
+dupes <- which(duplicated(Online_Retail))
+OnlineRetailData2 <- Online_Retail[-dupes,]
+OnlineRetailData <- OnlineRetailData2[complete.cases(OnlineRetailData2),]
+
+rm(OnlineRetailData1, dupes)
+rm(OnlineRetailData2)
+
+
+DT::datatable(head(OnlineRetailData, 20),
+              rownames = FALSE,
+              options = list(
+                pageLength = 5))
+
+
+Transactions_per_Country <- OnlineRetailData %>%
+  group_by(Country) %>%
+  summarise('Number of Transcations' = n()) %>%
+  arrange(desc(`Number of Transcations`)) %>%
+  top_n(10)
+
+names(Transactions_per_Country) <- c("Country", "Number of Transactions")
+
+
+Transaction_per_Country_Visz <- ggplot(head(Transactions_per_Country,5), aes(x=reorder(Country,-`Number of Transactions`), y=`Number of Transactions`)) +
+  geom_bar(stat = 'identity', fill = 'steelblue') +
+  scale_y_continuous(labels = comma) +
+  geom_text(aes(label = `Number of Transactions`), vjust = -0.5) +
+  ggtitle('Top 5 Countries by Number of Transactions') +
+  xlab('Countries') +
+  ylab('Number of Transactions') +
+  theme_minimal() 
+print(Transaction_per_Country_Visz)
+
+DT::datatable((Transactions_per_Country),
+              rownames = FALSE,
+              options = list(
+                pageLength = 10))
+
+UK_OnlineRetail <- OnlineRetailData %>%
+  filter(Country == 'United Kingdom')
+
+
+Users_Recency <- UK_OnlineRetail %>% 
+  group_by(CustomerID) %>%
+  summarise(Last_Customer_Activity = max(InvoiceDate)) %>%
+  mutate(Last_Invoice = max(Last_Customer_Activity)) 
+
+Users_Recency$Recency<- round(as.numeric(difftime(Users_Recency$Last_Invoice, Users_Recency$Last_Customer_Activity , units = c("days"))))
+
+Users_Recency <- Users_Recency %>%
+  select(CustomerID, Recency)
+
+print(summary(Users_Recency$Recency))
+
+ggplot(Users_Recency, aes(Recency)) +
+  geom_histogram() +
+  ylab('Number of Customers') +
+  theme_minimal()
+
+User_Frequency <- UK_OnlineRetail %>%
+  group_by(CustomerID) %>%
+  summarise(Frequency = n())
+
+summary(User_Frequency$Frequency)
+
+Below_3Q <- User_Frequency %>%
+  filter(Frequency <= 99)
+
+Outliers <- User_Frequency %>%
+  filter(Frequency >= 500)
+
+Below_3Q_Visz <- ggplot(Below_3Q, aes(CustomerID, Frequency)) +
+  geom_boxplot() +
+  ylab('Number of Purchases per Customer') +
+  ggtitle('Purchase Frequency - First 3 Quartiles') +
+  theme(axis.ticks.x = element_blank()) +
+  theme_minimal() 
+
+print(Below_3Q_Visz)
+
+Outliers_Visz <- ggplot(Outliers, aes(CustomerID, Frequency)) +
+  geom_boxplot() +
+  ylab('Number of Purchases per Customer') +
+  scale_y_continuous(labels= scales::comma) + 
+  ggtitle('Purchase Frequency - Outliers') +
+  theme(axis.ticks.x = element_blank()) +
+  theme_minimal()
+print(Outliers_Visz)
+
+
+Users_Monetary_Value <- UK_OnlineRetail %>%
+  mutate(Revenue = Quantity * UnitPrice) %>%
+  group_by(CustomerID) %>%
+  summarise(Monetary_Value=sum(Revenue))
+
+summary(Users_Monetary_Value$Monetary_Value)
+
+Outliers_Visz <- ggplot(MV_Outliers, aes(Monetary_Value)) +
+  geom_histogram() +
+  ggtitle('High Revenue Users - Outliers') +
+  ylab('Number of Users') +
+  xlab('Revenue') +
+  scale_x_continuous(labels = scales::dollar, breaks = c(50000, 100000, 150000, 200000, 250000, 300000, 350000)) +
+  scale_y_continuous(labels = scales::comma)
+print(Outliers_Visz)
+
+Users_RFM <- merge(Users_Recency, User_Frequency)
+Users_RFM <- merge(Users_RFM, Users_Monetary_Value)
+DT::datatable((Users_RFM),
+              rownames = FALSE,
+              options = list(
+                pageLength = 10))
+
+Statistical Clustering - KMeans
+
+set.seed(415)
+clusters <- kmeans(scale(Users_RFM[,2:4]), 3, nstart = 1) 
+
+Users_RFM$Cluster <- as.factor(clusters$cluster)
+
+Cluster_size_visz <- ggplot(KMeans_Results, aes(Cluster, `Number of Users`)) +
+  geom_text(aes(label = `Number of Users`), vjust = -0.3) +
+  geom_bar(aes(fill=Cluster), stat='identity') +
+  ggtitle('Number of Users per Cluster') + 
+  xlab("Cluster Number") +
+  theme_classic()
+print(Cluster_size_visz)
+
+ - Hiererchical Clustering
+
+install.packages("rpart")
+library("rpart")
+install.packages("rpart.plot")
+library("rpart.plot")
+
+
+Cluster_3_Tree <- Users_RFM %>%
+  filter(Cluster == '3') %>%
+  select(Frequency, Monetary_Value, Recency)
+
+fit_tree <-rpart(Monetary_Value ~ ., 
+                 data=Cluster_3_Tree,
+                 method = 'anova', 
+                 control= rpart.control(cp=0.0127102))
+
+rpart.plot(fit_tree, type=1,extra=1, box.palette=c("gray","lightblue"))
+
